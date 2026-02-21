@@ -191,6 +191,7 @@ EyeParameters CustomEyeEngine::getParamsForMood(Mood mood) {
         case WEATHER_SNOW:return {32, 32, 28, 28, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false, true, false, false};
         case BLUETOOTH_CONN:return {32, 32, 25, 25, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, false, true};
         case FIREWORKS:  return {32, 32, 30, 30, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false, true, false, true};
+        case NEUTRAL:
         default:         return {32, 32, 25, 25, 8, 0, 0, 8, 0, 0, 14, 0, 0, 4, 2, -2, 0, 0, 0, false, false, false, false, false, false};
     }
 }
