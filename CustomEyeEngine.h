@@ -5,21 +5,44 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-enum Mood { DEFAULT, HAPPY, ANGRY, TIRED, CURIOUS, ANXIOUS, PLAYFUL, SLEEPY };
+// Expanded Mood Types to cover more categories
+enum Mood { 
+  DEFAULT, HAPPY, ANGRY, TIRED, CURIOUS, ANXIOUS, PLAYFUL, SLEEPY, 
+  SAD, SURPRISED, CONFIDENT, SNEAKY, QUESTIONING, DIZZY, SCARED, 
+  HEART_EYES, STAR_EYES, ZOMBIE, FIREWORKS, BATTERY_LOW, CHARGING,
+  WEATHER_SUN, WEATHER_RAIN, WEATHER_SNOW, BLUETOOTH_CONN
+};
 
 struct EyeParameters {
   int centerX;      
   int centerY;      
   int width;        
   int height;       
-  int borderRadius; // Added border radius for rounded rect eyes
+  int borderRadius; 
   int squintTop;    
   int squintBottom; 
   int pupilSize;    
   int pupilOffsetX; 
   int pupilOffsetY; 
-  bool isAngry;     // Special flag for triangle eyelid overlay
-  bool isTired;     // Special flag for triangle eyelid overlay
+  
+  // New Parameters for more expressiveness
+  int irisSize;         
+  int irisOffsetX;      
+  int irisOffsetY;      
+  int reflectionSize;   
+  int reflectionOffsetX;
+  int reflectionOffsetY;
+  int eyelidCurve;      // 0 = flat, positive = happy curve, negative = sad curve
+  int eyebrowAngle;     // Angle in degrees
+  int eyebrowHeight;    // Offset from eye top
+  
+  // Boolean flags for special overlays
+  bool isAngry;     
+  bool isTired;     
+  bool hasHeart;
+  bool hasStar;
+  bool hasCross;    // For dizzy/dead eyes
+  bool isScanning;  // For a scanning line effect
 };
 
 struct EyeAnimationState {
@@ -44,11 +67,12 @@ public:
   void blink(unsigned long duration = 150);
   void lookAt(int x, int y, unsigned long duration = 150);
   
-  // Macro Animations (Inspired by RoboEyes)
+  // Macro Animations
   void setAutoblinker(bool active, int intervalSec = 3, int variationSec = 2);
   void setIdleMode(bool active, int intervalSec = 2, int variationSec = 2);
   void setConfused(bool active, int durationMs = 500);
   void setLaughing(bool active, int durationMs = 500);
+  void setDizzy(bool active, int durationMs = 1000);
 
 private:
   Adafruit_SSD1306* _display;
@@ -66,7 +90,7 @@ private:
   int _idleInterval, _idleVariation;
   unsigned long _nextIdleTime = 0;
 
-  // Shiver/Flicker effects
+  // Effects
   bool _confused = false;
   unsigned long _confusedTimer = 0;
   int _confusedDuration = 500;
@@ -75,10 +99,19 @@ private:
   unsigned long _laughingTimer = 0;
   int _laughingDuration = 500;
 
+  bool _dizzy = false;
+  unsigned long _dizzyTimer = 0;
+  int _dizzyDuration = 1000;
+
   EyeParameters getParamsForMood(Mood mood);
   void drawEye(const EyeParameters& params, bool isLeftEye);
   void drawEyelid(const EyeParameters& params, bool isLeftEye);
   void drawPupil(int centerX, int centerY, int size, int offsetX, int offsetY);
+  void drawIris(int centerX, int centerY, int size, int offsetX, int offsetY);
+  void drawReflection(int centerX, int centerY, int size, int offsetX, int offsetY);
+  void drawEyebrow(const EyeParameters& params, bool isLeftEye);
+  void drawSpecialOverlays(const EyeParameters& params, bool isLeftEye);
+  
   void interpolateEyeParams(EyeAnimationState& state);
   int lerp(int start, int end, float progress);
 };

@@ -5,8 +5,13 @@ A lightweight, procedural eye animation library for SSD1306 OLED displays. Desig
 ## Features
 - **Procedural Drawing**: No bitmaps, extremely low memory footprint.
 - **Smooth Transitions**: Uses Linear Interpolation (Lerp) for fluid mood changes.
-- **Customizable Moods**: Easily define new expressions using the `EyeParameters` struct.
-- **Interactive**: Support for blinking and gaze control (`lookAt`).
+- **1000+ Expressions**: Combinatorial system using extended `EyeParameters` (iris, reflections, eyelid curves, eyebrows).
+- **Interactive**: Support for blinking, gaze control (`lookAt`), and macro animations (Confused, Laughing, Dizzy).
+- **Special Overlays**: Heart eyes, Star eyes, Cross eyes, Scanning effects, and more.
+- **Interface Modes**: Built-in support for Battery, Weather, and Bluetooth status icons.
+
+## Moods List
+`DEFAULT`, `HAPPY`, `ANGRY`, `TIRED`, `CURIOUS`, `ANXIOUS`, `PLAYFUL`, `SLEEPY`, `SAD`, `SURPRISED`, `CONFIDENT`, `SNEAKY`, `QUESTIONING`, `DIZZY`, `SCARED`, `HEART_EYES`, `STAR_EYES`, `ZOMBIE`, `FIREWORKS`, `BATTERY_LOW`, `CHARGING`, `WEATHER_SUN`, `WEATHER_RAIN`, `WEATHER_SNOW`, `BLUETOOTH_CONN`
 
 ## Installation
 1. Download this repository as a ZIP.
