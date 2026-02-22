@@ -49,22 +49,16 @@ void CustomEyeEngine::update() {
     if (_laughing && currentTime >= _laughingTimer + _laughingDuration) _laughing = false;
     if (_dizzy && currentTime >= _dizzyTimer + _dizzyDuration) _dizzy = false;
 
-    // 2. Interpolate Animations
-    if (_leftEyeState.animating) {
-        interpolateEyeParams(_leftEyeState);
-        if (currentTime - _leftEyeState.startTime >= _leftEyeState.duration) {
-            _leftEyeState.animating = false;
-            _leftEyeState.currentParams = _leftEyeState.targetParams;
-        }
-        needsUpdate = true;
-    }
-
-    if (_rightEyeState.animating) {
-        interpolateEyeParams(_rightEyeState);
-        if (currentTime - _rightEyeState.startTime >= _rightEyeState.duration) {
-            _rightEyeState.animating = false;
-            _rightEyeState.currentParams = _rightEyeState.targetParams;
-        }
+    // 2. Interpolate Animations using Zeno's Paradox (Fluid Motion)
+    // We always interpolate towards target, even if "animating" is false, 
+    // to ensure smooth arrival and handle continuous updates.
+    interpolateEyeParams(_leftEyeState);
+    interpolateEyeParams(_rightEyeState);
+    
+    // Check if we are still significantly different from target
+    if (abs(_leftEyeState.currentParams.centerX - _leftEyeState.targetParams.centerX) > 0 ||
+        abs(_leftEyeState.currentParams.height - _leftEyeState.targetParams.height) > 0 ||
+        _leftEyeState.animating) {
         needsUpdate = true;
     }
 
@@ -123,6 +117,8 @@ void CustomEyeEngine::blink(unsigned long duration) {
     closed.pupilSize = 0;
     closed.irisSize = 0;
     setCustomParams(closed, duration / 2);
+    // Note: The logic to open back up is usually handled by the caller or a state machine.
+    // In this fluid version, we just set the target to closed.
 }
 
 void CustomEyeEngine::lookAt(int x, int y, unsigned long duration) {
@@ -167,7 +163,6 @@ void CustomEyeEngine::setDizzy(bool active, int duration) {
 }
 
 EyeParameters CustomEyeEngine::getParamsForMood(Mood mood) {
-    // Default: centerX, centerY, width, height, borderRadius, squintTop, squintBottom, pupilSize, pupilOffsetX, pupilOffsetY, irisSize, irisOffsetX, irisOffsetY, reflectionSize, reflectionOffsetX, reflectionOffsetY, eyelidCurve, eyebrowAngle, eyebrowHeight, isAngry, isTired, hasHeart, hasStar, hasCross, isScanning
     switch (mood) {
         case HAPPY:      return {32, 32, 28, 22, 10, 0, 0, 6, 0, -2, 16, 0, -2, 4, 3, -4, 5, 10, -5, false, false, false, false, false, false};
         case ANGRY:      return {32, 32, 25, 25, 5, 0, 0, 8, 0, 2, 14, 0, 2, 3, 2, -2, 0, -20, 5, true, false, false, false, false, false};
@@ -197,34 +192,17 @@ EyeParameters CustomEyeEngine::getParamsForMood(Mood mood) {
 }
 
 void CustomEyeEngine::drawEye(const EyeParameters& params, bool isLeftEye) {
-    // 1. Main Eye Body
     _display->fillRoundRect(params.centerX - params.width/2, params.centerY - params.height/2, 
                              params.width, params.height, params.borderRadius, SSD1306_WHITE);
-    
-    // 2. Iris
-    if (params.irisSize > 0) {
-        drawIris(params.centerX, params.centerY, params.irisSize, params.irisOffsetX, params.irisOffsetY);
-    }
-
-    // 3. Pupil
-    if (params.pupilSize > 0) {
-        drawPupil(params.centerX, params.centerY, params.pupilSize, params.pupilOffsetX, params.pupilOffsetY);
-    }
-
-    // 4. Reflection
-    if (params.reflectionSize > 0) {
-        drawReflection(params.centerX, params.centerY, params.reflectionSize, params.reflectionOffsetX, params.reflectionOffsetY);
-    }
-
-    // 5. Expression Overlays
+    if (params.irisSize > 0) drawIris(params.centerX, params.centerY, params.irisSize, params.irisOffsetX, params.irisOffsetY);
+    if (params.pupilSize > 0) drawPupil(params.centerX, params.centerY, params.pupilSize, params.pupilOffsetX, params.pupilOffsetY);
+    if (params.reflectionSize > 0) drawReflection(params.centerX, params.centerY, params.reflectionSize, params.reflectionOffsetX, params.reflectionOffsetY);
     drawEyelid(params, isLeftEye);
     drawEyebrow(params, isLeftEye);
     drawSpecialOverlays(params, isLeftEye);
 }
 
 void CustomEyeEngine::drawIris(int centerX, int centerY, int size, int offsetX, int offsetY) {
-    // For SSD1306 (monochrome), iris can be a pattern or just a slightly smaller circle than eye
-    // Here we'll draw it as a circle that might be clipped by the eye body
     _display->drawCircle(centerX + offsetX, centerY + offsetY, size / 2, SSD1306_BLACK);
 }
 
@@ -237,7 +215,6 @@ void CustomEyeEngine::drawReflection(int centerX, int centerY, int size, int off
 }
 
 void CustomEyeEngine::drawEyelid(const EyeParameters& params, bool isLeftEye) {
-    // Squinting
     if (params.squintTop > 0) {
         _display->fillRect(params.centerX - params.width/2 - 2, params.centerY - params.height/2 - 2, 
                            params.width + 4, params.squintTop, SSD1306_BLACK);
@@ -246,80 +223,52 @@ void CustomEyeEngine::drawEyelid(const EyeParameters& params, bool isLeftEye) {
         _display->fillRect(params.centerX - params.width/2 - 2, params.centerY + params.height/2 - params.squintBottom + 2, 
                            params.width + 4, params.squintBottom, SSD1306_BLACK);
     }
-
-    // Curved Eyelids (Happy/Sad)
     if (params.eyelidCurve != 0) {
         int curveHeight = abs(params.eyelidCurve);
-        if (params.eyelidCurve > 0) { // Happy curve (bottom up)
-            _display->fillCircle(params.centerX, params.centerY + params.height/2 + curveHeight, 
-                                 params.width, SSD1306_BLACK);
-        } else { // Sad curve (top down)
-            _display->fillCircle(params.centerX, params.centerY - params.height/2 - curveHeight, 
-                                 params.width, SSD1306_BLACK);
+        if (params.eyelidCurve > 0) {
+            _display->fillCircle(params.centerX, params.centerY + params.height/2 + curveHeight, params.width, SSD1306_BLACK);
+        } else {
+            _display->fillCircle(params.centerX, params.centerY - params.height/2 - curveHeight, params.width, SSD1306_BLACK);
         }
     }
-
-    // Special Mood Overlays
     if (params.isAngry) {
-        int x1 = params.centerX - params.width/2;
-        int y1 = params.centerY - params.height/2;
-        int x2 = params.centerX + params.width/2;
-        int y2 = y1;
-        int x3 = isLeftEye ? x2 : x1;
-        int y3 = params.centerY;
+        int x1 = params.centerX - params.width/2, y1 = params.centerY - params.height/2;
+        int x2 = params.centerX + params.width/2, y2 = y1;
+        int x3 = isLeftEye ? x2 : x1, y3 = params.centerY;
         _display->fillTriangle(x1, y1, x2, y2, x3, y3, SSD1306_BLACK);
     }
-    
     if (params.isTired) {
-        int x1 = params.centerX - params.width/2;
-        int y1 = params.centerY - params.height/2;
-        int x2 = params.centerX + params.width/2;
-        int y2 = y1;
-        int x3 = isLeftEye ? x1 : x2;
-        int y3 = params.centerY + params.height/2;
+        int x1 = params.centerX - params.width/2, y1 = params.centerY - params.height/2;
+        int x2 = params.centerX + params.width/2, y2 = y1;
+        int x3 = isLeftEye ? x1 : x2, y3 = params.centerY + params.height/2;
         _display->fillTriangle(x1, y1, x2, y2, x3, y3, SSD1306_BLACK);
     }
 }
 
 void CustomEyeEngine::drawEyebrow(const EyeParameters& params, bool isLeftEye) {
     if (params.eyebrowHeight == 0) return;
-    
-    int x = params.centerX;
-    int y = params.centerY - params.height/2 - params.eyebrowHeight;
+    int x = params.centerX, y = params.centerY - params.height/2 - params.eyebrowHeight;
     int w = params.width * 0.8;
-    int h = 2;
-    
-    // Simple rotated line for eyebrow
     float rad = params.eyebrowAngle * PI / 180.0;
     if (!isLeftEye) rad = -rad;
-    
-    int xOff = cos(rad) * w / 2;
-    int yOff = sin(rad) * w / 2;
-    
+    int xOff = cos(rad) * w / 2, yOff = sin(rad) * w / 2;
     _display->drawLine(x - xOff, y - yOff, x + xOff, y + yOff, SSD1306_WHITE);
 }
 
 void CustomEyeEngine::drawSpecialOverlays(const EyeParameters& params, bool isLeftEye) {
     if (params.hasHeart) {
-        int x = params.centerX;
-        int y = params.centerY;
-        _display->fillCircle(x-3, y-2, 4, SSD1306_BLACK);
-        _display->fillCircle(x+3, y-2, 4, SSD1306_BLACK);
+        int x = params.centerX, y = params.centerY;
+        _display->fillCircle(x-3, y-2, 4, SSD1306_BLACK); _display->fillCircle(x+3, y-2, 4, SSD1306_BLACK);
         _display->fillTriangle(x-7, y-1, x+7, y-1, x, y+6, SSD1306_BLACK);
     }
     if (params.hasStar) {
-        // Simple 5-point star approximation
-        int x = params.centerX;
-        int y = params.centerY;
+        int x = params.centerX, y = params.centerY;
         _display->fillTriangle(x, y-6, x-2, y+2, x+2, y+2, SSD1306_BLACK);
         _display->fillTriangle(x-6, y-2, x+6, y-2, x, y+4, SSD1306_BLACK);
     }
     if (params.hasCross) {
-        int x = params.centerX;
-        int y = params.centerY;
-        int s = 6;
-        _display->drawLine(x-s, y-s, x+s, y+s, SSD1306_BLACK);
-        _display->drawLine(x+s, y-s, x-s, y+s, SSD1306_BLACK);
+        int x = params.centerX, y = params.centerY, s = 6;
+        _display->drawLine(x-s, y-s, x+s, y+s, SSD1306_BLACK); _display->drawLine(x+s, y-s, x-s, y+s, SSD1306_BLACK);
     }
     if (params.isScanning) {
         int y = params.centerY - params.height/2 + (millis() % 2000) * params.height / 2000;
@@ -328,41 +277,45 @@ void CustomEyeEngine::drawSpecialOverlays(const EyeParameters& params, bool isLe
 }
 
 void CustomEyeEngine::interpolateEyeParams(EyeAnimationState& state) {
-    unsigned long elapsed = millis() - state.startTime;
-    float progress = (float)elapsed / state.duration;
-    if (progress > 1.0) progress = 1.0;
-
     auto& c = state.currentParams;
     auto& t = state.targetParams;
     
-    c.centerX = lerp(c.centerX, t.centerX, progress);
-    c.centerY = lerp(c.centerY, t.centerY, progress);
-    c.width = lerp(c.width, t.width, progress);
-    c.height = lerp(c.height, t.height, progress);
-    c.borderRadius = lerp(c.borderRadius, t.borderRadius, progress);
-    c.squintTop = lerp(c.squintTop, t.squintTop, progress);
-    c.squintBottom = lerp(c.squintBottom, t.squintBottom, progress);
-    c.pupilSize = lerp(c.pupilSize, t.pupilSize, progress);
-    c.pupilOffsetX = lerp(c.pupilOffsetX, t.pupilOffsetX, progress);
-    c.pupilOffsetY = lerp(c.pupilOffsetY, t.pupilOffsetY, progress);
-    
-    c.irisSize = lerp(c.irisSize, t.irisSize, progress);
-    c.irisOffsetX = lerp(c.irisOffsetX, t.irisOffsetX, progress);
-    c.irisOffsetY = lerp(c.irisOffsetY, t.irisOffsetY, progress);
-    c.reflectionSize = lerp(c.reflectionSize, t.reflectionSize, progress);
-    c.reflectionOffsetX = lerp(c.reflectionOffsetX, t.reflectionOffsetX, progress);
-    c.reflectionOffsetY = lerp(c.reflectionOffsetY, t.reflectionOffsetY, progress);
-    c.eyelidCurve = lerp(c.eyelidCurve, t.eyelidCurve, progress);
-    c.eyebrowAngle = lerp(c.eyebrowAngle, t.eyebrowAngle, progress);
-    c.eyebrowHeight = lerp(c.eyebrowHeight, t.eyebrowHeight, progress);
+    // Zeno's Paradox Interpolation: current = (current + target) / 2
+    // This creates a smooth, asymptotic approach to the target.
+    c.centerX = (c.centerX + t.centerX) / 2;
+    c.centerY = (c.centerY + t.centerY) / 2;
+    c.width = (c.width + t.width) / 2;
+    c.height = (c.height + t.height) / 2;
+    c.borderRadius = (c.borderRadius + t.borderRadius) / 2;
+    c.squintTop = (c.squintTop + t.squintTop) / 2;
+    c.squintBottom = (c.squintBottom + t.squintBottom) / 2;
+    c.pupilSize = (c.pupilSize + t.pupilSize) / 2;
+    c.pupilOffsetX = (c.pupilOffsetX + t.pupilOffsetX) / 2;
+    c.pupilOffsetY = (c.pupilOffsetY + t.pupilOffsetY) / 2;
+    c.irisSize = (c.irisSize + t.irisSize) / 2;
+    c.irisOffsetX = (c.irisOffsetX + t.irisOffsetX) / 2;
+    c.irisOffsetY = (c.irisOffsetY + t.irisOffsetY) / 2;
+    c.reflectionSize = (c.reflectionSize + t.reflectionSize) / 2;
+    c.reflectionOffsetX = (c.reflectionOffsetX + t.reflectionOffsetX) / 2;
+    c.reflectionOffsetY = (c.reflectionOffsetY + t.reflectionOffsetY) / 2;
+    c.eyelidCurve = (c.eyelidCurve + t.eyelidCurve) / 2;
+    c.eyebrowAngle = (c.eyebrowAngle + t.eyebrowAngle) / 2;
+    c.eyebrowHeight = (c.eyebrowHeight + t.eyebrowHeight) / 2;
 
-    if (progress >= 1.0) {
+    // Snap to target if very close
+    if (abs(c.centerX - t.centerX) < 1) c.centerX = t.centerX;
+    if (abs(c.height - t.height) < 1) c.height = t.height;
+
+    // Boolean flags snap immediately or at the end
+    unsigned long elapsed = millis() - state.startTime;
+    if (elapsed >= state.duration) {
         c.isAngry = t.isAngry;
         c.isTired = t.isTired;
         c.hasHeart = t.hasHeart;
         c.hasStar = t.hasStar;
         c.hasCross = t.hasCross;
         c.isScanning = t.isScanning;
+        state.animating = false;
     }
 }
 
