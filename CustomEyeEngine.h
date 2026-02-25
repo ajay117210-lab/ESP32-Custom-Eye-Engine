@@ -46,6 +46,7 @@ struct EyeParameters {
 };
 
 struct EyeAnimationState {
+  EyeParameters startParams;
   EyeParameters currentParams; 
   EyeParameters targetParams;  
   unsigned long startTime;     
@@ -80,6 +81,14 @@ private:
   EyeAnimationState _rightEyeState;
   int _screenWidth;
   int _screenHeight;
+  EyeParameters _baseMoodParams;
+  int _gazeOffsetX = 0;
+  int _gazeOffsetY = 0;
+
+  bool _blinkActive = false;
+  bool _blinkClosing = false;
+  unsigned long _blinkPhaseStart = 0;
+  unsigned long _blinkDuration = 150;
 
   // Autoblinker & Idle Timers
   bool _autoblinker = false;
@@ -111,6 +120,10 @@ private:
   void drawReflection(int centerX, int centerY, int size, int offsetX, int offsetY);
   void drawEyebrow(const EyeParameters& params, bool isLeftEye);
   void drawSpecialOverlays(const EyeParameters& params, bool isLeftEye);
+
+  void startAnimation(EyeAnimationState& state, const EyeParameters& target, unsigned long animDuration);
+  bool isAtTarget(const EyeAnimationState& state) const;
+  int clampInt(int value, int minValue, int maxValue) const;
   
   void interpolateEyeParams(EyeAnimationState& state);
   int lerp(int start, int end, float progress);

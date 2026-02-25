@@ -4,20 +4,27 @@ CustomEyeEngine::CustomEyeEngine(Adafruit_SSD1306* displayPtr) : _display(displa
     _screenWidth = displayPtr->width();
     _screenHeight = displayPtr->height();
 
-    // Default neutral state
     EyeParameters defaultParams = {
-        32, 32, 25, 20, 8, 0, 0, 8, 0, 0, // Base
-        14, 0, 0, 4, 2, -2, 0, 0, 0,      // New params
-        false, false, false, false, false, false // Flags
+        32, 32, 25, 20, 8, 0, 0, 8, 0, 0,
+        14, 0, 0, 4, 2, -2, 0, 0, 0,
+        false, false, false, false, false, false
     };
-    
+
+    _baseMoodParams = defaultParams;
+
+    _leftEyeState.startParams = defaultParams;
     _leftEyeState.currentParams = defaultParams;
     _leftEyeState.targetParams = defaultParams;
+    _leftEyeState.startTime = 0;
+    _leftEyeState.duration = 0;
     _leftEyeState.animating = false;
 
-    _rightEyeState.currentParams = defaultParams;
-    _rightEyeState.currentParams.centerX = _screenWidth - defaultParams.centerX;
-    _rightEyeState.targetParams = _rightEyeState.currentParams;
+    _rightEyeState.startParams = defaultParams;
+    _rightEyeState.startParams.centerX = _screenWidth - defaultParams.centerX;
+    _rightEyeState.currentParams = _rightEyeState.startParams;
+    _rightEyeState.targetParams = _rightEyeState.startParams;
+    _rightEyeState.startTime = 0;
+    _rightEyeState.duration = 0;
     _rightEyeState.animating = false;
 }
 
@@ -29,53 +36,63 @@ void CustomEyeEngine::begin() {
 }
 
 void CustomEyeEngine::update() {
-    unsigned long currentTime = millis();
-    bool needsUpdate = false;
+    const unsigned long currentTime = millis();
 
-    // 1. Handle Macro Animations
     if (_autoblinker && currentTime >= _nextBlinkTime) {
         blink(150);
-        _nextBlinkTime = currentTime + (_blinkInterval * 1000) + random(_blinkVariation * 1000);
+        _nextBlinkTime = currentTime + (_blinkInterval * 1000UL) + random(_blinkVariation * 1000UL);
     }
 
     if (_idleMode && currentTime >= _nextIdleTime) {
         int tx = random(0, _screenWidth);
         int ty = random(0, _screenHeight);
-        lookAt(tx, ty, 500);
-        _nextIdleTime = currentTime + (_idleInterval * 1000) + random(_idleVariation * 1000);
+        lookAt(tx, ty, 300);
+        _nextIdleTime = currentTime + (_idleInterval * 1000UL) + random(_idleVariation * 1000UL);
+    }
+
+    if (_blinkActive) {
+        unsigned long phaseDuration = _blinkDuration / 2;
+        if (phaseDuration == 0) phaseDuration = 1;
+
+        if (_blinkClosing && (currentTime - _blinkPhaseStart) >= phaseDuration) {
+            EyeParameters openTarget = _baseMoodParams;
+            openTarget.pupilOffsetX += _gazeOffsetX;
+            openTarget.pupilOffsetY += _gazeOffsetY;
+            openTarget.irisOffsetX += _gazeOffsetX;
+            openTarget.irisOffsetY += _gazeOffsetY;
+            setCustomParams(openTarget, phaseDuration);
+            _blinkClosing = false;
+            _blinkPhaseStart = currentTime;
+        } else if (!_blinkClosing && !_leftEyeState.animating && !_rightEyeState.animating) {
+            _blinkActive = false;
+        }
     }
 
     if (_confused && currentTime >= _confusedTimer + _confusedDuration) _confused = false;
     if (_laughing && currentTime >= _laughingTimer + _laughingDuration) _laughing = false;
     if (_dizzy && currentTime >= _dizzyTimer + _dizzyDuration) _dizzy = false;
 
-    // 2. Interpolate Animations using Zeno's Paradox (Fluid Motion)
-    // We always interpolate towards target, even if "animating" is false, 
-    // to ensure smooth arrival and handle continuous updates.
     interpolateEyeParams(_leftEyeState);
     interpolateEyeParams(_rightEyeState);
-    
-    // Check if we are still significantly different from target
-    if (abs(_leftEyeState.currentParams.centerX - _leftEyeState.targetParams.centerX) > 0 ||
-        abs(_leftEyeState.currentParams.height - _leftEyeState.targetParams.height) > 0 ||
-        _leftEyeState.animating) {
-        needsUpdate = true;
-    }
 
-    // 3. Draw if needed
+    bool needsUpdate = _leftEyeState.animating || _rightEyeState.animating ||
+                       !isAtTarget(_leftEyeState) || !isAtTarget(_rightEyeState);
+
     if (needsUpdate || _confused || _laughing || _dizzy) {
         _display->clearDisplay();
-        
+
         EyeParameters l = _leftEyeState.currentParams;
         EyeParameters r = _rightEyeState.currentParams;
 
         if (_confused) {
             int off = random(-2, 3);
-            l.centerX += off; r.centerX += off;
+            l.centerX += off;
+            r.centerX += off;
         }
         if (_laughing) {
             int off = random(-2, 3);
-            l.centerY += off; r.centerY += off;
+            l.centerY += off;
+            r.centerY += off;
         }
         if (_dizzy) {
             l.pupilOffsetX = cos(currentTime / 100.0) * 5;
@@ -91,42 +108,66 @@ void CustomEyeEngine::update() {
 }
 
 void CustomEyeEngine::setMood(Mood newMood, unsigned long duration) {
-    setCustomParams(getParamsForMood(newMood), duration);
+    _baseMoodParams = getParamsForMood(newMood);
+    _baseMoodParams.pupilOffsetX += _gazeOffsetX;
+    _baseMoodParams.pupilOffsetY += _gazeOffsetY;
+    _baseMoodParams.irisOffsetX += _gazeOffsetX;
+    _baseMoodParams.irisOffsetY += _gazeOffsetY;
+
+    _blinkActive = false;
+    _blinkClosing = false;
+
+    setCustomParams(_baseMoodParams, duration);
 }
 
 void CustomEyeEngine::setCustomParams(const EyeParameters& params, unsigned long animDuration) {
-    unsigned long currentTime = millis();
+    EyeParameters leftTarget = params;
+    leftTarget.width = clampInt(leftTarget.width, 2, _screenWidth);
+    leftTarget.height = clampInt(leftTarget.height, 2, _screenHeight);
+    leftTarget.borderRadius = clampInt(leftTarget.borderRadius, 0, leftTarget.height / 2);
+    leftTarget.centerX = clampInt(leftTarget.centerX, leftTarget.width / 2, _screenWidth - leftTarget.width / 2);
+    leftTarget.centerY = clampInt(leftTarget.centerY, leftTarget.height / 2, _screenHeight - leftTarget.height / 2);
 
-    _leftEyeState.targetParams = params;
-    _leftEyeState.startTime = currentTime;
-    _leftEyeState.duration = animDuration;
-    _leftEyeState.animating = true;
+    EyeParameters rightTarget = leftTarget;
+    rightTarget.centerX = _screenWidth - leftTarget.centerX;
 
-    _rightEyeState.targetParams = params;
-    _rightEyeState.targetParams.centerX = _screenWidth - params.centerX;
-    _rightEyeState.startTime = currentTime;
-    _rightEyeState.duration = animDuration;
-    _rightEyeState.animating = true;
+    startAnimation(_leftEyeState, leftTarget, animDuration);
+    startAnimation(_rightEyeState, rightTarget, animDuration);
 }
 
 void CustomEyeEngine::blink(unsigned long duration) {
-    EyeParameters closed = _leftEyeState.currentParams;
+    EyeParameters closed = _baseMoodParams;
     closed.height = 2;
+    closed.borderRadius = 1;
     closed.squintTop = 0;
     closed.squintBottom = 0;
     closed.pupilSize = 0;
     closed.irisSize = 0;
-    setCustomParams(closed, duration / 2);
-    // Note: The logic to open back up is usually handled by the caller or a state machine.
-    // In this fluid version, we just set the target to closed.
+    closed.reflectionSize = 0;
+
+    unsigned long phaseDuration = duration / 2;
+    if (phaseDuration == 0) phaseDuration = 1;
+
+    _blinkActive = true;
+    _blinkClosing = true;
+    _blinkDuration = duration;
+    _blinkPhaseStart = millis();
+    setCustomParams(closed, phaseDuration);
 }
 
 void CustomEyeEngine::lookAt(int x, int y, unsigned long duration) {
-    EyeParameters target = _leftEyeState.targetParams;
-    target.pupilOffsetX = map(x, 0, _screenWidth, -target.width/4, target.width/4);
-    target.pupilOffsetY = map(y, 0, _screenHeight, -target.height/4, target.height/4);
-    target.irisOffsetX = target.pupilOffsetX;
-    target.irisOffsetY = target.pupilOffsetY;
+    EyeParameters target = _baseMoodParams;
+
+    _gazeOffsetX = map(x, 0, _screenWidth, -target.width / 4, target.width / 4);
+    _gazeOffsetY = map(y, 0, _screenHeight, -target.height / 4, target.height / 4);
+
+    _gazeOffsetX = clampInt(_gazeOffsetX, -target.width / 3, target.width / 3);
+    _gazeOffsetY = clampInt(_gazeOffsetY, -target.height / 3, target.height / 3);
+
+    target.pupilOffsetX += _gazeOffsetX;
+    target.pupilOffsetY += _gazeOffsetY;
+    target.irisOffsetX += _gazeOffsetX;
+    target.irisOffsetY += _gazeOffsetY;
     setCustomParams(target, duration);
 }
 
@@ -192,11 +233,13 @@ EyeParameters CustomEyeEngine::getParamsForMood(Mood mood) {
 }
 
 void CustomEyeEngine::drawEye(const EyeParameters& params, bool isLeftEye) {
-    _display->fillRoundRect(params.centerX - params.width/2, params.centerY - params.height/2, 
-                             params.width, params.height, params.borderRadius, SSD1306_WHITE);
+    _display->fillRoundRect(params.centerX - params.width / 2, params.centerY - params.height / 2,
+                            params.width, params.height, params.borderRadius, SSD1306_WHITE);
+
     if (params.irisSize > 0) drawIris(params.centerX, params.centerY, params.irisSize, params.irisOffsetX, params.irisOffsetY);
     if (params.pupilSize > 0) drawPupil(params.centerX, params.centerY, params.pupilSize, params.pupilOffsetX, params.pupilOffsetY);
     if (params.reflectionSize > 0) drawReflection(params.centerX, params.centerY, params.reflectionSize, params.reflectionOffsetX, params.reflectionOffsetY);
+
     drawEyelid(params, isLeftEye);
     drawEyebrow(params, isLeftEye);
     drawSpecialOverlays(params, isLeftEye);
@@ -216,107 +259,158 @@ void CustomEyeEngine::drawReflection(int centerX, int centerY, int size, int off
 
 void CustomEyeEngine::drawEyelid(const EyeParameters& params, bool isLeftEye) {
     if (params.squintTop > 0) {
-        _display->fillRect(params.centerX - params.width/2 - 2, params.centerY - params.height/2 - 2, 
+        _display->fillRect(params.centerX - params.width / 2 - 2, params.centerY - params.height / 2 - 2,
                            params.width + 4, params.squintTop, SSD1306_BLACK);
     }
     if (params.squintBottom > 0) {
-        _display->fillRect(params.centerX - params.width/2 - 2, params.centerY + params.height/2 - params.squintBottom + 2, 
+        _display->fillRect(params.centerX - params.width / 2 - 2, params.centerY + params.height / 2 - params.squintBottom + 2,
                            params.width + 4, params.squintBottom, SSD1306_BLACK);
     }
     if (params.eyelidCurve != 0) {
         int curveHeight = abs(params.eyelidCurve);
         if (params.eyelidCurve > 0) {
-            _display->fillCircle(params.centerX, params.centerY + params.height/2 + curveHeight, params.width, SSD1306_BLACK);
+            _display->fillCircle(params.centerX, params.centerY + params.height / 2 + curveHeight, params.width, SSD1306_BLACK);
         } else {
-            _display->fillCircle(params.centerX, params.centerY - params.height/2 - curveHeight, params.width, SSD1306_BLACK);
+            _display->fillCircle(params.centerX, params.centerY - params.height / 2 - curveHeight, params.width, SSD1306_BLACK);
         }
     }
     if (params.isAngry) {
-        int x1 = params.centerX - params.width/2, y1 = params.centerY - params.height/2;
-        int x2 = params.centerX + params.width/2, y2 = y1;
-        int x3 = isLeftEye ? x2 : x1, y3 = params.centerY;
+        int x1 = params.centerX - params.width / 2;
+        int y1 = params.centerY - params.height / 2;
+        int x2 = params.centerX + params.width / 2;
+        int y2 = y1;
+        int x3 = isLeftEye ? x2 : x1;
+        int y3 = params.centerY;
         _display->fillTriangle(x1, y1, x2, y2, x3, y3, SSD1306_BLACK);
     }
     if (params.isTired) {
-        int x1 = params.centerX - params.width/2, y1 = params.centerY - params.height/2;
-        int x2 = params.centerX + params.width/2, y2 = y1;
-        int x3 = isLeftEye ? x1 : x2, y3 = params.centerY + params.height/2;
+        int x1 = params.centerX - params.width / 2;
+        int y1 = params.centerY - params.height / 2;
+        int x2 = params.centerX + params.width / 2;
+        int y2 = y1;
+        int x3 = isLeftEye ? x1 : x2;
+        int y3 = params.centerY + params.height / 2;
         _display->fillTriangle(x1, y1, x2, y2, x3, y3, SSD1306_BLACK);
     }
 }
 
 void CustomEyeEngine::drawEyebrow(const EyeParameters& params, bool isLeftEye) {
     if (params.eyebrowHeight == 0) return;
-    int x = params.centerX, y = params.centerY - params.height/2 - params.eyebrowHeight;
+
+    int x = params.centerX;
+    int y = params.centerY - params.height / 2 - params.eyebrowHeight;
     int w = params.width * 0.8;
     float rad = params.eyebrowAngle * PI / 180.0;
+
     if (!isLeftEye) rad = -rad;
-    int xOff = cos(rad) * w / 2, yOff = sin(rad) * w / 2;
+
+    int xOff = cos(rad) * w / 2;
+    int yOff = sin(rad) * w / 2;
     _display->drawLine(x - xOff, y - yOff, x + xOff, y + yOff, SSD1306_WHITE);
 }
 
 void CustomEyeEngine::drawSpecialOverlays(const EyeParameters& params, bool isLeftEye) {
+    (void)isLeftEye;
     if (params.hasHeart) {
         int x = params.centerX, y = params.centerY;
-        _display->fillCircle(x-3, y-2, 4, SSD1306_BLACK); _display->fillCircle(x+3, y-2, 4, SSD1306_BLACK);
-        _display->fillTriangle(x-7, y-1, x+7, y-1, x, y+6, SSD1306_BLACK);
+        _display->fillCircle(x - 3, y - 2, 4, SSD1306_BLACK);
+        _display->fillCircle(x + 3, y - 2, 4, SSD1306_BLACK);
+        _display->fillTriangle(x - 7, y - 1, x + 7, y - 1, x, y + 6, SSD1306_BLACK);
     }
     if (params.hasStar) {
         int x = params.centerX, y = params.centerY;
-        _display->fillTriangle(x, y-6, x-2, y+2, x+2, y+2, SSD1306_BLACK);
-        _display->fillTriangle(x-6, y-2, x+6, y-2, x, y+4, SSD1306_BLACK);
+        _display->fillTriangle(x, y - 6, x - 2, y + 2, x + 2, y + 2, SSD1306_BLACK);
+        _display->fillTriangle(x - 6, y - 2, x + 6, y - 2, x, y + 4, SSD1306_BLACK);
     }
     if (params.hasCross) {
         int x = params.centerX, y = params.centerY, s = 6;
-        _display->drawLine(x-s, y-s, x+s, y+s, SSD1306_BLACK); _display->drawLine(x+s, y-s, x-s, y+s, SSD1306_BLACK);
+        _display->drawLine(x - s, y - s, x + s, y + s, SSD1306_BLACK);
+        _display->drawLine(x + s, y - s, x - s, y + s, SSD1306_BLACK);
     }
     if (params.isScanning) {
-        int y = params.centerY - params.height/2 + (millis() % 2000) * params.height / 2000;
-        _display->drawFastHLine(params.centerX - params.width/2, y, params.width, SSD1306_BLACK);
+        int y = params.centerY - params.height / 2 + (millis() % 2000) * params.height / 2000;
+        _display->drawFastHLine(params.centerX - params.width / 2, y, params.width, SSD1306_BLACK);
     }
 }
 
-void CustomEyeEngine::interpolateEyeParams(EyeAnimationState& state) {
-    auto& c = state.currentParams;
-    auto& t = state.targetParams;
-    
-    // Zeno's Paradox Interpolation: current = (current + target) / 2
-    // This creates a smooth, asymptotic approach to the target.
-    c.centerX = (c.centerX + t.centerX) / 2;
-    c.centerY = (c.centerY + t.centerY) / 2;
-    c.width = (c.width + t.width) / 2;
-    c.height = (c.height + t.height) / 2;
-    c.borderRadius = (c.borderRadius + t.borderRadius) / 2;
-    c.squintTop = (c.squintTop + t.squintTop) / 2;
-    c.squintBottom = (c.squintBottom + t.squintBottom) / 2;
-    c.pupilSize = (c.pupilSize + t.pupilSize) / 2;
-    c.pupilOffsetX = (c.pupilOffsetX + t.pupilOffsetX) / 2;
-    c.pupilOffsetY = (c.pupilOffsetY + t.pupilOffsetY) / 2;
-    c.irisSize = (c.irisSize + t.irisSize) / 2;
-    c.irisOffsetX = (c.irisOffsetX + t.irisOffsetX) / 2;
-    c.irisOffsetY = (c.irisOffsetY + t.irisOffsetY) / 2;
-    c.reflectionSize = (c.reflectionSize + t.reflectionSize) / 2;
-    c.reflectionOffsetX = (c.reflectionOffsetX + t.reflectionOffsetX) / 2;
-    c.reflectionOffsetY = (c.reflectionOffsetY + t.reflectionOffsetY) / 2;
-    c.eyelidCurve = (c.eyelidCurve + t.eyelidCurve) / 2;
-    c.eyebrowAngle = (c.eyebrowAngle + t.eyebrowAngle) / 2;
-    c.eyebrowHeight = (c.eyebrowHeight + t.eyebrowHeight) / 2;
+void CustomEyeEngine::startAnimation(EyeAnimationState& state, const EyeParameters& target, unsigned long animDuration) {
+    state.startParams = state.currentParams;
+    state.targetParams = target;
+    state.startTime = millis();
+    state.duration = animDuration;
+    state.animating = (animDuration > 0);
 
-    // Snap to target if very close
-    if (abs(c.centerX - t.centerX) < 1) c.centerX = t.centerX;
-    if (abs(c.height - t.height) < 1) c.height = t.height;
-
-    // Boolean flags snap immediately or at the end
-    unsigned long elapsed = millis() - state.startTime;
-    if (elapsed >= state.duration) {
-        c.isAngry = t.isAngry;
-        c.isTired = t.isTired;
-        c.hasHeart = t.hasHeart;
-        c.hasStar = t.hasStar;
-        c.hasCross = t.hasCross;
-        c.isScanning = t.isScanning;
+    if (animDuration == 0) {
+        state.currentParams = target;
         state.animating = false;
     }
+}
+
+bool CustomEyeEngine::isAtTarget(const EyeAnimationState& state) const {
+    const EyeParameters& c = state.currentParams;
+    const EyeParameters& t = state.targetParams;
+
+    return c.centerX == t.centerX && c.centerY == t.centerY &&
+           c.width == t.width && c.height == t.height &&
+           c.borderRadius == t.borderRadius &&
+           c.squintTop == t.squintTop && c.squintBottom == t.squintBottom &&
+           c.pupilSize == t.pupilSize && c.pupilOffsetX == t.pupilOffsetX && c.pupilOffsetY == t.pupilOffsetY &&
+           c.irisSize == t.irisSize && c.irisOffsetX == t.irisOffsetX && c.irisOffsetY == t.irisOffsetY &&
+           c.reflectionSize == t.reflectionSize && c.reflectionOffsetX == t.reflectionOffsetX && c.reflectionOffsetY == t.reflectionOffsetY &&
+           c.eyelidCurve == t.eyelidCurve && c.eyebrowAngle == t.eyebrowAngle && c.eyebrowHeight == t.eyebrowHeight &&
+           c.isAngry == t.isAngry && c.isTired == t.isTired &&
+           c.hasHeart == t.hasHeart && c.hasStar == t.hasStar && c.hasCross == t.hasCross && c.isScanning == t.isScanning;
+}
+
+int CustomEyeEngine::clampInt(int value, int minValue, int maxValue) const {
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
+    return value;
+}
+
+void CustomEyeEngine::interpolateEyeParams(EyeAnimationState& state) {
+    if (!state.animating) return;
+
+    unsigned long elapsed = millis() - state.startTime;
+    if (elapsed >= state.duration) {
+        state.currentParams = state.targetParams;
+        state.animating = false;
+        return;
+    }
+
+    float progress = (float)elapsed / (float)state.duration;
+    progress = progress * progress * (3.0f - (2.0f * progress));
+
+    auto& s = state.startParams;
+    auto& c = state.currentParams;
+    auto& t = state.targetParams;
+
+    c.centerX = lerp(s.centerX, t.centerX, progress);
+    c.centerY = lerp(s.centerY, t.centerY, progress);
+    c.width = lerp(s.width, t.width, progress);
+    c.height = lerp(s.height, t.height, progress);
+    c.borderRadius = lerp(s.borderRadius, t.borderRadius, progress);
+    c.squintTop = lerp(s.squintTop, t.squintTop, progress);
+    c.squintBottom = lerp(s.squintBottom, t.squintBottom, progress);
+    c.pupilSize = lerp(s.pupilSize, t.pupilSize, progress);
+    c.pupilOffsetX = lerp(s.pupilOffsetX, t.pupilOffsetX, progress);
+    c.pupilOffsetY = lerp(s.pupilOffsetY, t.pupilOffsetY, progress);
+    c.irisSize = lerp(s.irisSize, t.irisSize, progress);
+    c.irisOffsetX = lerp(s.irisOffsetX, t.irisOffsetX, progress);
+    c.irisOffsetY = lerp(s.irisOffsetY, t.irisOffsetY, progress);
+    c.reflectionSize = lerp(s.reflectionSize, t.reflectionSize, progress);
+    c.reflectionOffsetX = lerp(s.reflectionOffsetX, t.reflectionOffsetX, progress);
+    c.reflectionOffsetY = lerp(s.reflectionOffsetY, t.reflectionOffsetY, progress);
+    c.eyelidCurve = lerp(s.eyelidCurve, t.eyelidCurve, progress);
+    c.eyebrowAngle = lerp(s.eyebrowAngle, t.eyebrowAngle, progress);
+    c.eyebrowHeight = lerp(s.eyebrowHeight, t.eyebrowHeight, progress);
+
+    c.isAngry = t.isAngry;
+    c.isTired = t.isTired;
+    c.hasHeart = t.hasHeart;
+    c.hasStar = t.hasStar;
+    c.hasCross = t.hasCross;
+    c.isScanning = t.isScanning;
 }
 
 int CustomEyeEngine::lerp(int start, int end, float progress) {

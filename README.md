@@ -11,7 +11,7 @@ A lightweight, procedural eye animation library for SSD1306 OLED displays. Desig
 - **Interface Modes**: Built-in support for Battery, Weather, and Bluetooth status icons.
 
 ## Moods List
-`DEFAULT`, `HAPPY`, `ANGRY`, `TIRED`, `CURIOUS`, `ANXIOUS`, `PLAYFUL`, `SLEEPY`, `SAD`, `SURPRISED`, `CONFIDENT`, `SNEAKY`, `QUESTIONING`, `DIZZY`, `SCARED`, `HEART_EYES`, `STAR_EYES`, `ZOMBIE`, `FIREWORKS`, `BATTERY_LOW`, `CHARGING`, `WEATHER_SUN`, `WEATHER_RAIN`, `WEATHER_SNOW`, `BLUETOOTH_CONN`
+`NEUTRAL`, `HAPPY`, `ANGRY`, `TIRED`, `CURIOUS`, `ANXIOUS`, `PLAYFUL`, `SLEEPY`, `SAD`, `SURPRISED`, `CONFIDENT`, `SNEAKY`, `QUESTIONING`, `DIZZY`, `SCARED`, `HEART_EYES`, `STAR_EYES`, `ZOMBIE`, `FIREWORKS`, `BATTERY_LOW`, `CHARGING`, `WEATHER_SUN`, `WEATHER_RAIN`, `WEATHER_SNOW`, `BLUETOOTH_CONN`
 
 ## Installation
 1. Download this repository as a ZIP.
@@ -37,3 +37,20 @@ void loop() {
   roboEyes.update();
 }
 ```
+
+## Verify You Got the Latest Changes
+If you do not see updated behavior, make sure your local branch includes the latest commit:
+
+```bash
+git checkout main
+git pull origin main
+git log --oneline -n 3
+```
+
+If GitHub still shows old commits, push your local branch explicitly:
+
+```bash
+git push -u origin main
+```
+
+Then re-upload/rebuild in Arduino IDE so the new library sources are used.
